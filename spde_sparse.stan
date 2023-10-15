@@ -1,4 +1,4 @@
-// from https://github.com/lionel68/spde_stan/blob/main/script/stan_spde.stan
+// inspired from https://github.com/lionel68/spde_stan/blob/main/script/stan_spde.stan
 data {
   int n;    // n obs
   int p;    // n par
@@ -32,9 +32,6 @@ transformed data{
   parameters {
     vector[p] beta; 
     vector[2] tau_kappa_log;
-    // array[3] vector[n_knots] bs;
-    // real log_tau;
-    // real log_kappa;
     vector[n_knots] u;   // spatial random effect  
     real<lower=0> sigma;
   }
@@ -44,11 +41,8 @@ transformed data{
   // T.PARAMETERS
 //========================
   transformed parameters {
-    // real<lower=0> tau = exp(tau_kappa_log[1]);
-    // real<lower=0> kappa = exp(tau_kappa_log[2]);
     vector[3] llmda = L * tau_kappa_log;
     vector[3] lmda = exp(llmda);
-    // vector[n] ll;
     //------------------------------------------
     vector[n] eta;
     vector[n_knots] beta_s;
