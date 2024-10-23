@@ -4,19 +4,16 @@ data {
   int p;    // n par
   int n_knots;    // rows sparse matrix
   matrix[n, 2] lat_lon;
-  vector[n] y;         //The response
+  array[n] int y;         //The response
   matrix[n, p] X;         //Design matrix for fixed effects
   int n_non_zero_M;
   int n_non_zero_A;
-  matrix[3,2]L;
+  matrix[3,2] L;
   matrix[n_knots, n_knots ] M0;     // SPDE matrices from INLA
   matrix[n_knots, n_knots ] M1;
   matrix[n_knots, n_knots ] M2;
   matrix[ n,n_knots] A;     //Matrix for interpolating points witin triangles
-  // real lambda;
-  vector[2] prior_mean_tau_kappa_log;
-  vector[2] prior_sd_tau_kappa_log;
-  // real ln_kappa;
+  real lambda;
 }
 transformed data{
   // vector[n_knots] zeroes = rep_vector(0, n_knots);
@@ -27,7 +24,6 @@ transformed data{
   array[n_non_zero_M] int col_id_M = csr_extract_v(M0);
   tuple(vector[n_non_zero_A],array[n_non_zero_A] int,array[(n+1)] int) A_sparse;
   A_sparse = csr_extract(A);
-  // vector[ n_knots] mus = rep_vector(0, n_knots);
   
 }
 
@@ -38,9 +34,7 @@ transformed data{
     vector[p] beta; 
     vector[2] tau_kappa_log;
     vector[n_knots] u;   // spatial random effect
-    real<lower=0> sigma;
-    // vector[ n_knots] mus;
-    // real<lower=0> lambda;
+  
   }
 
 
@@ -53,41 +47,31 @@ transformed data{
     //------------------------------------------
     vector[n] eta;
     // real lambda = exp(log_lambda);
-    
-    // vector[n_knots] l_theta;
-    real log_lik_u;
+    vector[n_knots] pen_v;
+    real pen;
+    vector[n_knots] l_theta;
     real log_lik;
-    // vector[n_knots] beta_s;
-    // {
-    // vector[n_knots] beta_s2;
-    // vector[n] B_delta;
     
-    // matrix[n_knots, n_knots] Q;
     vector[n] delta;
     {
       vector[n_non_zero_M] Qa;
-      vector[n_knots] pen_v;
-      // matrix[n_knots, n_knots] Q;
       Qa = lmda[1] * M0_v + lmda[2] * M1_v + lmda[3] * M2_v;
-      pen_v = csr_matrix_times_vector(n_knots, n_knots,
-                      Qa,col_id_M,row_id_M,
-                       u);
       
-      log_lik_u = -1 * dot_product(pen_v, u);
-      
-     
-        // Equivalent to:
-      // log_lik_u2 = u' * Q * u;
-      // Q = csr_to_dense_matrix(n_knots, n_knots, Qa, col_id_M, row_id_M);
+      pen_v = csr_matrix_times_vector(n_knots, n_knots, Qa,col_id_M,row_id_M,u );
+
+
+      pen = to_row_vector(pen_v) * u;
+      // Check this versus papers on TP
       
       
-      delta = csr_matrix_times_vector(n,n_knots,A_sparse.1,
-                      A_sparse.2,A_sparse.3,u); // spatial
-                      
-      eta = X * beta + delta ;
-      
-      // log_lik -= tau_kappa_log[1] + tau_kappa_log[2] + log(sigma);
+      log_lik = -1*  lambda * pen;
     }
+    delta = csr_matrix_times_vector(n,n_knots,A_sparse.1,
+                      A_sparse.2,A_sparse.3,u); // spatial
+    
+    eta = X * beta + delta ;
+    
+    
   }
 
 //========================
@@ -95,22 +79,15 @@ transformed data{
 //========================
   model {
     //---------------------------------------------
-    u  ~  student_t(3, 0, 3.2);
-    // std_normal();
-    sigma ~ exponential(1);
-    beta[1] ~ normal(7,2);
-    // beta[2] ~ normal(0,2);
-
-    tau_kappa_log[1] ~ normal(prior_mean_tau_kappa_log[1], 
-                               prior_sd_tau_kappa_log[1]); // tau
-    tau_kappa_log[2] ~ normal(prior_mean_tau_kappa_log[2], 
-                            prior_sd_tau_kappa_log[2]); // kappa
+    u  ~ normal( 0 , 1 );
+    beta ~ normal(0,10);
+    lambda ~ std_normal();
+    tau_kappa_log[1] ~ normal(-13, 2); // tau
+    tau_kappa_log[2] ~ normal(4.77, 1); // kappa
     
     
-    target += normal_lpdf(y | eta, sigma);
-    target += log_lik_u;
-    
-
+    target += bernoulli_logit_lpmf(y | eta);
+    target += log_lik; //multi_normal_prec_lpdf(u | mus, Q); 
   }
 
 //========================

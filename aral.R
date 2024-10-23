@@ -10,7 +10,7 @@
 
 ## LIBRARIES 
 library(mgcv)
-source("https://raw.githubusercontent.com/dill/SPDE-smoothing/master/supplementary/mgcv_spde_smooth.R") 
+source("https://raw.githubusercontent.com/dill/SPDE-smoothing/master/supplementary/mgcv_spde_smooth.R")
 source("spde_smooth.R") 
 library(fmesher)
 library(INLA)
@@ -41,7 +41,7 @@ mesh <- fm_mesh_2d_inla(boundary=bnd,
                         max.n.strict=c(128000, 128000), ## Don't build a huge mesh!
                         cutoff=0.01, ## Filter away adjacent points.
                         offset=c(0.1, 0.3)) ## Offset for extra boundaries, if needed.
-
+class(mesh) <- 'inla.mesh'
 #### FIT SPDE MODEL WITH MGCV ################################################# 
 mod <- gam(chl ~ s(lon, lat, bs = "spde", k = mesh$n, xt = list(mesh = mesh)),
            data = aral,
@@ -72,7 +72,10 @@ stan_data <- list(
   M0 = (S[[1]]),# matrix[row_spar, col_spar] M0;     // SPDE matrices from INLA
   M1 = (S[[2]]),# matrix[row_spar, col_spar] M1;
   M2 = (S[[3]]),# matrix[row_spar, col_spar] M2;
-  A = (smooth_spde$A)# matrix[n, col_spar] A;     //Matrix for interpolating points witin triangles
+  A = (smooth_spde$A),# matrix[n, col_spar] A;     //Matrix for interpolating points witin triangles
+  lambda = 1,
+  prior_mean_tau_kappa_log = log(c(3.603, 0.429)),
+  prior_sd_tau_kappa_log = c(3,3)
 )
 
 
@@ -84,21 +87,60 @@ mod_stan <- cmdstan_model("spde_sparse.stan")
 samples <- mod_stan$sample(data = stan_data,
                            chains = 4,
                            parallel_chains = 4,
-                           iter_warmup = 1500, 
-                           iter_sampling = 2000)
+                           iter_warmup = 1000, 
+                           iter_sampling = 1000,
+                           output_dir = 
+                             "F:/TMP_STAN")
+
+
+sum_ <- samples$summary()
+
 
 ## Extract  values for comparison --------------
 
-s_mle <- mod_stan$optimize(data = stan_data, seed = 123,iter = 5000 )
+s_mle <- mod_stan$optimize(data = stan_data, seed = 123, jacobian = T,
+                           output_dir = 
+                             "F:/TMP_STAN")
+
+ss <- s_mle$summary()
+
 
 dd <- samples$draws(variables = glue::glue("eta[{1:485}]"))
-dda <- samples$draws(variables = c("tau", "kappa", "beta[1]", 'range', 'sigma'))
+
  
 aral$pred <- apply(dd, 3, mean) 
+aral$pred_sd <- apply(dd, 3, sd) 
+aral$ss_u <- dplyr::filter(ss, stringr::str_detect(variable, "^eta")) |> 
+  dplyr::pull(estimate)
+
+ggplot(aral, aes(chl, pred)) +
+  geom_point() +
+  geom_linerange(aes(ymin = pred-pred_sd, ymax = pred+pred_sd))+
+  geom_point(aes(y = pred_gam),
+             colour = 'red',
+             alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0) +
+  geom_point(aes(y = ss_u), colour = 'grey', 
+             alpha = 0.2)
+
+ggplot(aral, aes(pred_gam, pred)) +
+  geom_point(alpha = 0.3) +
+  geom_linerange(aes(ymin = pred-pred_sd, ymax = pred+pred_sd),
+                 alpha = 0.3) +
+  geom_abline(slope = 1, intercept = 0)
+
+
+
+
 bayesplot::mcmc_trace(samples$draws(variables = c("tau_kappa_log","tau", "kappa",
                                                   "beta")))
 
-bayesplot::mcmc_areas_ridges(samples$draws(variables = "u"))
+bayesplot::mcmc_trace(samples$draws(variables = "log_lik_u") )
+bayesplot::mcmc_pairs(samples$draws(
+  variables = c("tau_kappa_log[1]", "tau_kappa_log[2]",
+                "sigma", "beta")) )
+
+bayesplot::mcmc_areas_ridges(samples$draws(variables = "delta"))
 
 
 aral |> 
@@ -119,13 +161,9 @@ aral |>
   geom_raster()
 
 
-ggplot(aral, aes(chl, pred)) +
-  geom_point() +
-  geom_point(aes(y = pred_gam),
-             colour = 'red',
-             alpha = 0.5)
 
 
+dda <- samples$draws(variables = c("tau", "kappa", "beta[1]", 'range', 'sigma_spde'))
 
 ## get estimates for mgcv
 kappa <- mod$sp[2]
@@ -139,7 +177,10 @@ sigma <- 1 / (sqrt(tau^2 * 4*pi * kappa^2))
 cat("mgcv:\n")
 cat("kappa=", kappa, "\n")
 cat("tau=", tau, "\n\n")
+cat("rho=", rho, "\n\n")
+cat("sigma=", sigma, "\n\n")
 
 
 cat("Stan averages")
 apply(dda, 3, mean)
+apply(dda, 3, sd)
