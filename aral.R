@@ -49,6 +49,18 @@ mod <- gam(chl ~ s(lon, lat, bs = "spde", k = mesh$n, xt = list(mesh = mesh)),
            method = "REML")
 aral$pred_gam <- predict(mod)
 
+g_test <- readr::read_rds("gam_testing_object.rds")
+names(g_test)
+(g_test$smooth[[1]]$bs.dim)
+g_test$U1 |> heatm()
+
+
+s_spde <- smooth.construct.spde.smooth.spec(s(lon, lat, bs = "spde", k = mesh$n, xt = list(mesh = mesh)),
+    data = aral)
+
+gratia::penalty(s_spde)
+
+
 ## Setup data for stan -----------------------------
 smooth_spde <- smooth.construct.spde.test(aral,coords = c("lon", "lat"), mesh_in = mesh, knots = mesh$n )
 
@@ -74,7 +86,7 @@ stan_data <- list(
   M2 = (S[[3]]),# matrix[row_spar, col_spar] M2;
   A = (smooth_spde$A),# matrix[n, col_spar] A;     //Matrix for interpolating points witin triangles
   lambda = 1,
-  prior_mean_tau_kappa_log = log(c(3.603, 0.429)),
+  prior_mean_tau_kappa_log = log(rev(c(3.603, 0.429))),
   prior_sd_tau_kappa_log = c(3,3)
 )
 
@@ -95,15 +107,24 @@ samples <- mod_stan$sample(data = stan_data,
 
 sum_ <- samples$summary()
 
+d <- samples$draws()
+
+shinystan::launch_shinystan((samples))
+
+stanfit <- rstan::read_stan_csv(list.files(
+  "F:/TMP_STAN", full.names = T
+))
+shinystan::launch_shinystan(stanfit)
 
 ## Extract  values for comparison --------------
 
-s_mle <- mod_stan$optimize(data = stan_data, seed = 123, jacobian = T,
+s_mle <- mod_stan$optimize(data = stan_data, seed = 123, jacobian = F,algorithm = 'newton',
                            output_dir = 
                              "F:/TMP_STAN")
 
 ss <- s_mle$summary()
-
+dplyr::filter(ss, stringr::str_detect(variable, "^u\\[")) |> 
+  dplyr::pull(estimate) |> plot(y=mod$coefficients)
 
 dd <- samples$draws(variables = glue::glue("eta[{1:485}]"))
 
@@ -119,7 +140,7 @@ ggplot(aral, aes(chl, pred)) +
   geom_point(aes(y = pred_gam),
              colour = 'red',
              alpha = 0.5) +
-  geom_abline(slope = 1, intercept = 0) +
+  geom_abline(slope = 1, intercept = 0)# +
   geom_point(aes(y = ss_u), colour = 'grey', 
              alpha = 0.2)
 
@@ -136,6 +157,7 @@ bayesplot::mcmc_trace(samples$draws(variables = c("tau_kappa_log","tau", "kappa"
                                                   "beta")))
 
 bayesplot::mcmc_trace(samples$draws(variables = "log_lik_u") )
+bayesplot::mcmc_trace(samples$draws(variables = "lambda") )
 bayesplot::mcmc_pairs(samples$draws(
   variables = c("tau_kappa_log[1]", "tau_kappa_log[2]",
                 "sigma", "beta")) )
@@ -163,7 +185,7 @@ aral |>
 
 
 
-dda <- samples$draws(variables = c("tau", "kappa", "beta[1]", 'range', 'sigma_spde'))
+dda <- samples$draws(variables = c("tau", "kappa", "beta[1]", 'range', 'sigma_spde', "sigma"))
 
 ## get estimates for mgcv
 kappa <- mod$sp[2]

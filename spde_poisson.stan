@@ -4,7 +4,7 @@ data {
   int p;    // n par
   int n_knots;    // rows sparse matrix
   // matrix[n, 2] lat_lon;
-  vector[n] y;         //The response
+  array[n] int y;         //The response
   matrix[n, p] X;         //Design matrix for fixed effects
   int n_non_zero_M;
   int n_non_zero_A;
@@ -15,6 +15,8 @@ data {
   matrix[ n,n_knots] A;     //Matrix for interpolating points witin triangles
   vector[2] prior_mean_tau_kappa_log;
   vector[2] prior_sd_tau_kappa_log;
+  matrix[557, p] pred_x;
+  matrix[557, n_knots] pred_mat;
 }
 transformed data{
   vector[n_non_zero_M] M0_v = csr_extract_w(M0);
@@ -34,7 +36,6 @@ transformed data{
     vector[p] beta; 
     vector[2] tau_kappa_log;
     vector[n_knots] u;   // spatial random effect
-    real<lower=0> sigma;
     // vector[ n_knots] mus;
   }
 
@@ -49,22 +50,22 @@ transformed data{
     vector[n] eta;
     real log_lik_u;
     
-    matrix[n_knots, n_knots] Q;
+    // matrix[n_knots, n_knots] Q;
     vector[n] delta;
+     vector[n_non_zero_M] Qa;
+     vector[n_knots] pen_v;
     {
-      vector[n_non_zero_M] Qa;
-      vector[n_knots] pen_v;
+     
+     
       // matrix[n_knots, n_knots] Q;
       Qa = lmda[1] * M0_v + lmda[2] * M1_v + lmda[3] * M2_v;
       pen_v = csr_matrix_times_vector(n_knots, n_knots,
                       Qa,col_id_M,row_id_M,
                        u);
-      
+
       // log_lik_u = -1 * dot_product(pen_v, u);
-      Q = csr_to_dense_matrix(n_knots, n_knots, Qa, col_id_M, row_id_M);
-      real logdetQ = log_determinant(Q);
-      log_lik_u = -(0.5) * logdetQ + (.5) * dot_product(pen_v, u) + n_knots *
-                          (log(sqrt(2.0 * pi())));
+      log_lik_u = -1 * (to_row_vector(pen_v) * u);
+      
      
         // Equivalent to:
       // log_lik_u2 = u' * Q * u;
@@ -83,10 +84,9 @@ transformed data{
 //========================
   model {
     //---------------------------------------------
-    u  ~  student_t(3, 0, 3.2);
+    u  ~ std_normal();//student_t(3, 0, 3.2);
     //
-    sigma ~ exponential(1);
-    beta[1] ~ normal(7,2);
+    beta[1] ~ normal(log(11.5),0.2);
     // beta[2] ~ normal(0,2);
 
     tau_kappa_log[1] ~ normal(prior_mean_tau_kappa_log[1],
@@ -95,7 +95,7 @@ transformed data{
                             prior_sd_tau_kappa_log[2]); // kappa
     
     target += log_lik_u;
-    target += normal_lpdf(y | eta, sigma);
+    target += poisson_log_lpmf(y | eta);
     
     
 
@@ -111,4 +111,10 @@ transformed data{
     real denom = (pow(tau,2)) * 4*pi() * (pow(kappa,2));
         // see Lindgren et al. (2011) for this formula
     real sigma_spde = 1 / (sqrt(denom));
+    
+    vector[557] lambda_p = pred_x * beta + pred_mat * u;
+    
+    
+    
+    
   }

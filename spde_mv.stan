@@ -24,6 +24,7 @@ transformed data{
   array[n_non_zero_M] int col_id_M = csr_extract_v(M0);
   tuple(vector[n_non_zero_A],array[n_non_zero_A] int,array[(n+1)] int) A_sparse;
   A_sparse = csr_extract(A);
+   vector[n_knots]zeros = rep_vector(0, n_knots);
   
 }
 
@@ -47,28 +48,13 @@ transformed data{
     vector[3] lmda = exp(llmda);
     //------------------------------------------
     vector[n] eta;
-    real log_lik_u;
     
     matrix[n_knots, n_knots] Q;
     vector[n] delta;
     {
       vector[n_non_zero_M] Qa;
-      vector[n_knots] pen_v;
-      // matrix[n_knots, n_knots] Q;
       Qa = lmda[1] * M0_v + lmda[2] * M1_v + lmda[3] * M2_v;
-      pen_v = csr_matrix_times_vector(n_knots, n_knots,
-                      Qa,col_id_M,row_id_M,
-                       u);
-      
-      // log_lik_u = -1 * dot_product(pen_v, u);
       Q = csr_to_dense_matrix(n_knots, n_knots, Qa, col_id_M, row_id_M);
-      real logdetQ = log_determinant(Q);
-      log_lik_u = -(0.5) * logdetQ + (.5) * dot_product(pen_v, u) + n_knots *
-                          (log(sqrt(2.0 * pi())));
-     
-        // Equivalent to:
-      // log_lik_u2 = u' * Q * u;
-      // Q = csr_to_dense_matrix(n_knots, n_knots, Qa, col_id_M, row_id_M);
       
       delta = csr_matrix_times_vector(n,n_knots,A_sparse.1,
                       A_sparse.2,A_sparse.3,u); // spatial
@@ -83,7 +69,7 @@ transformed data{
 //========================
   model {
     //---------------------------------------------
-    u  ~  student_t(3, 0, 3.2);
+    u  ~  multi_normal_prec(zeros, Q);
     //
     sigma ~ exponential(1);
     beta[1] ~ normal(7,2);
@@ -94,7 +80,6 @@ transformed data{
     tau_kappa_log[2] ~ normal(prior_mean_tau_kappa_log[2],
                             prior_sd_tau_kappa_log[2]); // kappa
     
-    target += log_lik_u;
     target += normal_lpdf(y | eta, sigma);
     
     
